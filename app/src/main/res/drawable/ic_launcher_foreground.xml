@@ -1,0 +1,25 @@
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- لوگوی آنیک v3.1: دیافراگم دوربین (آپارچر) — ۶ تیغه سفید با فاصله،
+         سوراخ شش‌ضلعی و نقطه قرمز شاتر در مرکز (REZONIX).
+         جایگزین لوگوی دوربین v3.0 که خیلی ساده/کلیشه‌ای بود.
+         تیغه‌ها با مختصات دقیق محاسبه شده‌اند (مرکز ۵۴،۵۴؛ شعاع بیرونی ۳۲؛
+         شعاع سوراخ ۱۴؛ چرخش ۲۸ درجه؛ فاصله ۳ درجه بین تیغه‌ها) و
+         محتوای مهم داخل ناحیه امن ۶۶dp مرکزی است. -->
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M86.0,55.7 A32,32 0 0 1 71.4,80.8 L55.2,67.9 L66.0,61.2 Z" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M68.5,82.5 A32,32 0 0 1 39.5,82.5 L42.5,62.0 L53.8,68.0 Z" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M36.6,80.8 A32,32 0 0 1 22.0,55.7 L41.3,48.1 L41.8,60.8 Z" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M22.0,52.3 A32,32 0 0 1 36.6,27.2 L52.8,40.1 L42.0,46.8 Z" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M39.5,25.5 A32,32 0 0 1 68.5,25.5 L65.5,46.0 L54.2,40.0 Z" />
+    <path android:fillColor="#FFFFFF"
+        android:pathData="M71.4,27.2 A32,32 0 0 1 86.0,52.3 L66.7,59.9 L66.2,47.2 Z" />
+    <!-- نقطه قرمز شاتر در مرکز -->
+    <path android:fillColor="#DC2626"
+        android:pathData="M49.0,54.0 A5.0,5.0 0 1,0 59.0,54.0 A5.0,5.0 0 1,0 49.0,54.0 Z" />
+</vector>
