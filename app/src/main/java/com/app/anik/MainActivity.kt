@@ -8,6 +8,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -49,6 +50,7 @@ import androidx.compose.ui.unit.LayoutDirection
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import androidx.lifecycle.viewmodel.compose.viewModel
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -120,8 +122,8 @@ private fun Typography.withFont(f: FontFamily) = Typography(
 class Sample(val label: String, val file: String, val website: String)
 
 // ───────── پیش‌تنظیم‌های اندازه خروجی (عرض × ارتفاع) ─────────
-private val SIZE_PRESETS = listOf(1000 to 1000, 1080 to 1350, 1080 to 1920)
-private val SIZE_LABELS = listOf("مربع ۱۰۰۰", "عمودی ۱۰۸۰×۱۳۵۰", "استوری ۱۰۸۰×۱۹۲۰")
+internal val SIZE_PRESETS = listOf(1000 to 1000, 1080 to 1350, 1080 to 1920)
+internal val SIZE_LABELS = listOf("مربع ۱۰۰۰", "عمودی ۱۰۸۰×۱۳۵۰", "استوری ۱۰۸۰×۱۹۲۰")
 
 data class BatchItem(
     val name: String,
@@ -178,234 +180,39 @@ class MainActivity : ComponentActivity() {
 fun AnikScreen() {
     val P = LocalPal.current
     val ctx = LocalContext.current
+    val vm: AnikViewModel = viewModel()
     val scope = rememberCoroutineScope()
     val samples = remember { loadSamples(ctx) }
-
-    var srcBitmap by remember { mutableStateOf<Bitmap?>(null) }
-    var prepared by remember { mutableStateOf<Prepared?>(null) }
-    var imageName by remember { mutableStateOf("") }
-    var websiteUrl by remember { mutableStateOf("") }
-    var mode by remember { mutableStateOf(BgMode.SIMPLE) }
-    var shadow by remember { mutableStateOf(ShadowStyle.CONTACT) }
-    var brandColor by remember { mutableStateOf("#7C3AED") }
-    var hexText by remember { mutableStateOf("#7C3AED") }
-    var siteColors by remember { mutableStateOf(listOf<String>()) }
-    var siteTheme by remember { mutableStateOf<ThemeEngine.SiteTheme?>(null) }
-    var detecting by remember { mutableStateOf(false) }
-    var detectNote by remember { mutableStateOf("") }
-    var processing by remember { mutableStateOf(false) }
-    var result by remember { mutableStateOf<ProcessedResult?>(null) }
-    var linkUrl by remember { mutableStateOf<String?>(null) }
-    var linkHost by remember { mutableStateOf("") }
-    var linkBusy by remember { mutableStateOf(false) }
-    var linkError by remember { mutableStateOf<String?>(null) }
-    var toastMsg by remember { mutableStateOf<String?>(null) }
-    // v3: اندازه خروجی، شفافیت، مقایسه، اصلاح لمسی، بچ و خروجی‌های اخیر
-    var transparent by remember { mutableStateOf(false) }
-    var sizePreset by remember { mutableStateOf(0) }
-    var compare by remember { mutableStateOf(false) }
-    var comparePos by remember { mutableStateOf(0.5f) }
-    var refineMode by remember { mutableStateOf(false) }
-    var refineFg by remember { mutableStateOf(true) }
-    var refining by remember { mutableStateOf(false) }
-    var recentView by remember { mutableStateOf<Bitmap?>(null) }
-    var recents by remember { mutableStateOf(listOf<Bitmap>()) }
-    var batchItems by remember { mutableStateOf(listOf<BatchItem>()) }
-    var batchBusy by remember { mutableStateOf(false) }
-
-    fun pushRecent(bmp: Bitmap) {
-        recents = (listOf(bmp) + recents.filter { it !== bmp }).take(4)
-    }
-
-    suspend fun renderCurrent(pr: Prepared): ProcessedResult? = withContext(Dispatchers.Default) {
-        val (w, h) = SIZE_PRESETS[sizePreset]
-        runCatching {
-            ImageProcessor.render(pr, mode, shadow, if (mode == BgMode.BRAND && !transparent) brandColor else null, w, h, transparent,
-                brandGradient = if (mode == BgMode.BRAND && !transparent) siteTheme?.gradient else null)
-        }.getOrNull()
-    }
-
-    // نسخه مربعی عکس ورودی در اندازه خروجی — برای اسلایدر مقایسه قبل/بعد
-    // همان مربع کاری prepare() (جاگذاری کامل عکس، نه برش وسط) تا مقایسه با خروجی هم‌تراز باشد
-    val srcPreview = remember(srcBitmap, sizePreset) {
-        val s = srcBitmap ?: return@remember null
-        val (w, h) = SIZE_PRESETS[sizePreset]
-        val sq = ImageProcessor.fitSquare(s, ImageProcessor.WORK)
-        Bitmap.createScaledBitmap(sq, w, h, true)
-    }
-
-    fun toast(m: String) { toastMsg = m }
-    fun setBrand(c: String) {
-        val v = c.trim().uppercase().let { if (it.startsWith("#")) it else "#$it" }
-        brandColor = v; hexText = v
-    }
-    fun resetResult() { result = null; prepared = null; linkUrl = null; linkError = null; recentView = null; compare = false; refineMode = false }
-    fun applyImage(bmp: Bitmap?, name: String) {
-        if (bmp == null) { toast("خواندن عکس ناموفق بود"); return }
-        srcBitmap = bmp; imageName = name; resetResult()
-    }
 
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri != null) scope.launch {
             val bmp = withContext(Dispatchers.IO) { runCatching { BitmapUtils.decode(ctx, uri) }.getOrNull() }
-            applyImage(bmp, uri.lastPathSegment?.substringAfterLast('/') ?: "تصویر محصول")
+            vm.applyImage(bmp, uri.lastPathSegment?.substringAfterLast('/') ?: "تصویر محصول")
         }
     }
 
     // پردازش دسته‌ای: تا ۶ عکس، هرکدام با همان تنظیمات فعلی
     val batchPicker = rememberLauncherForActivityResult(ActivityResultContracts.PickMultipleVisualMedia(6)) { uris ->
-        if (uris.isEmpty() || batchBusy) return@rememberLauncherForActivityResult
-        scope.launch {
-            batchBusy = true
-            batchItems = uris.mapIndexed { idx, _ -> BatchItem("عکس ${idx + 1}") }
-            uris.forEachIndexed { idx, uri ->
-                try {
-                    val bmp = withContext(Dispatchers.IO) { runCatching { BitmapUtils.decode(ctx, uri) }.getOrNull() }
-                    if (bmp == null) {
-                        batchItems = batchItems.mapIndexed { i, it -> if (i == idx) it.copy(error = "خواندن عکس ناموفق بود") else it }
-                    } else {
-                        val pr = withContext(Dispatchers.Default) { ImageProcessor.prepare(bmp) }
-                        val r = renderCurrent(pr)
-                        if (r != null) {
-                            batchItems = batchItems.mapIndexed { i, it -> if (i == idx) it.copy(result = r) else it }
-                            pushRecent(r.bitmap)
-                        } else {
-                            batchItems = batchItems.mapIndexed { i, it -> if (i == idx) it.copy(error = "پردازش ناموفق بود") else it }
-                        }
-                    }
-                } catch (e: Throwable) {
-                    batchItems = batchItems.mapIndexed { i, it -> if (i == idx) it.copy(error = "خطا: ${e.message ?: "ناشناخته"}") else it }
-                }
-            }
-            batchBusy = false
-            toast("پردازش دسته‌ای تمام شد")
-        }
+        vm.startBatch(uris)
     }
 
-    LaunchedEffect(toastMsg) { if (toastMsg != null) { delay(3500); toastMsg = null } }
+    LaunchedEffect(vm.toastMsg) { if (vm.toastMsg != null) { delay(3500); vm.toastMsg = null } }
 
-    LaunchedEffect(websiteUrl) {
-        if (websiteUrl.isBlank()) { detectNote = ""; siteColors = emptyList(); siteTheme = null; return@LaunchedEffect }
-        delay(600)
-        detecting = true; detectNote = "در حال استخراج پالت و تم سایت..."
-        val d = runCatching { ColorDetector.detect(websiteUrl) }.getOrNull()
-        if (d != null) {
-            if (d.all.isNotEmpty()) siteColors = d.all
-            if (d.found) {
-                setBrand(d.color)
-                siteTheme = ThemeEngine.build(d)
-                detectNote = "تم سایت شناسایی شد (${d.color}) · ${siteTheme?.note} · ${d.source}"
-            } else { siteTheme = null; detectNote = "رنگ برند سایت شناسایی نشد؛ لطفاً رنگ را دستی انتخاب کنید" }
-        } else { siteTheme = null; detectNote = "اتصال به سایت ممکن نشد؛ رنگ را دستی انتخاب کنید" }
-        detecting = false
-    }
+    LaunchedEffect(vm.websiteUrl) { vm.detectWebsite(vm.websiteUrl) }
 
     // رندر مجدد زنده با تغییر سایه/حالت/رنگ/اندازه/شفافیت/تم (جداسازی دوباره انجام نمی‌شود)
-    LaunchedEffect(shadow, mode, brandColor, transparent, sizePreset, siteTheme) {
-        val pr = prepared
-        if (result == null || pr == null || processing) return@LaunchedEffect
-        val r = renderCurrent(pr)
-        if (r != null) { result = r; linkUrl = null; linkError = null; recentView = null }
+    LaunchedEffect(vm.shadow, vm.mode, vm.brandColor, vm.transparent, vm.sizePreset, vm.siteTheme) {
+        vm.refreshRender()
     }
 
-    fun build() {
-        val s = srcBitmap ?: return
-        if (processing) return
-        scope.launch {
-            processing = true
-            try {
-                val pr = withContext(Dispatchers.Default) { prepared ?: ImageProcessor.prepare(s) }
-                prepared = pr
-                val r = renderCurrent(pr)
-                if (r != null) {
-                    result = r; linkUrl = null; linkError = null; recentView = null
-                    pushRecent(r.bitmap)
-                }
-            } catch (e: Throwable) {
-                toast("خطایی در پردازش عکس رخ داد. لطفاً دوباره امتحان کنید.")
-            } finally { processing = false }
-        }
+    // پیش‌نمایش «قبل» هم‌تراز با خروجی — همان جایگذاری رندر، نه کشش مربع
+    val srcPreview = remember(vm.prepared, vm.sizePreset, vm.shadow) {
+        val pr = vm.prepared ?: return@remember null
+        val (w, h) = SIZE_PRESETS[vm.sizePreset]
+        ImageProcessor.buildBeforePreview(pr, w, h, vm.shadow)
     }
-
-    // لمس روی پیش‌نمایش در حالت اصلاح: مختصات لمس را به مربع کاری ۸۰۰×۸۰۰ می‌برد
-    fun refineAt(off: Offset, previewWpx: Float, previewWidthDp: Float) {
-        val pr = prepared ?: return
-        val res = result ?: return
-        if (refining || recentView != null) return
-        val (bw, bh) = SIZE_PRESETS[sizePreset]
-        val previewHpx = previewWpx * bh / bw
-        val bx = off.x / previewWpx * bw
-        val by = off.y / previewHpx * bh
-        val rect = res.subjectRect
-        if (bx < rect.left || bx > rect.right || by < rect.top || by > rect.bottom) {
-            toast("روی خود محصول بزنید")
-            return
-        }
-        val localX = (bx - rect.left) / rect.width() * pr.subject.bmp.width
-        val localY = (by - rect.top) / rect.height() * pr.subject.bmp.height
-        val wx = pr.subject.ox + localX
-        val wy = pr.subject.oy + localY
-        val radius = 800f * 26f / previewWidthDp.coerceAtLeast(1f)
-        scope.launch {
-            refining = true
-            try {
-                val np = withContext(Dispatchers.Default) { ImageProcessor.refineTouch(pr, wx, wy, radius, refineFg) }
-                prepared = np
-                val r = renderCurrent(np)
-                if (r != null) result = r
-            } catch (e: Throwable) {
-                toast("اصلاح لمسی ناموفق بود")
-            } finally { refining = false }
-        }
-    }
-
-    fun getLink() {
-        val r = result ?: return
-        if (linkBusy) return
-        linkUrl?.let { Share.copy(ctx, it); toast("لینک مستقیم تصویر کپی شد!"); return }
-        scope.launch {
-            linkBusy = true; linkError = null
-            try {
-                val bytes = withContext(Dispatchers.Default) {
-                    ByteArrayOutputStream().also { r.bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
-                }
-                val up = withContext(Dispatchers.IO) { ImageHosts.upload(bytes, "anik_${System.currentTimeMillis()}.png") }
-                if (result === r) {
-                    linkUrl = up.url; linkHost = up.host
-                    Share.copy(ctx, up.url); toast("لینک مستقیم تصویر کپی شد!")
-                }
-            } catch (e: Throwable) {
-                linkError = e.message ?: "خطای ناشناخته"
-                toast("آپلود روی هاست تصویر ناموفق بود")
-            } finally { linkBusy = false }
-        }
-    }
-
-    fun batchLink(idx: Int) {
-        val item = batchItems.getOrNull(idx) ?: return
-        val r = item.result ?: return
-        if (item.busy) return
-        item.link?.let { Share.copy(ctx, it); toast("لینک کپی شد!"); return }
-        scope.launch {
-            batchItems = batchItems.mapIndexed { i, it -> if (i == idx) it.copy(busy = true, error = null) else it }
-            try {
-                val bytes = withContext(Dispatchers.Default) {
-                    ByteArrayOutputStream().also { r.bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }.toByteArray()
-                }
-                val up = withContext(Dispatchers.IO) { ImageHosts.upload(bytes, "anik_batch_${System.currentTimeMillis()}.png") }
-                batchItems = batchItems.mapIndexed { i, it -> if (i == idx) it.copy(busy = false, link = up.url, host = up.host) else it }
-                Share.copy(ctx, up.url); toast("لینک کپی شد!")
-            } catch (e: Throwable) {
-                batchItems = batchItems.mapIndexed { i, it -> if (i == idx) it.copy(busy = false, error = e.message ?: "خطای ناشناخته") else it }
-            }
-        }
-    }
-
-    fun batchSave(idx: Int) {
-        val r = batchItems.getOrNull(idx)?.result ?: return
-        runCatching { Share.saveToGallery(ctx, r.bitmap) }
-            .onSuccess { toast("ذخیره شد: $it") }
-            .onFailure { toast("ذخیره ناموفق بود") }
+    DisposableEffect(srcPreview) {
+        onDispose { try { if (srcPreview != null && !srcPreview.isRecycled) srcPreview.recycle() } catch (_: Throwable) { } }
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -429,7 +236,7 @@ fun AnikScreen() {
 
                 // ───── ۱. انتخاب عکس ─────
                 Column {
-                    val sb = srcBitmap
+                    val sb = vm.srcBitmap
                     Box(
                         Modifier.fillMaxWidth().heightIn(min = 110.dp).clip(RoundedCornerShape(16.dp))
                             .background(if (sb != null) (Color(0x33022C22)) else P.dropBg)
@@ -444,7 +251,7 @@ fun AnikScreen() {
                                     contentScale = ContentScale.Crop)
                                 Column(Modifier.weight(1f)) {
                                     Text("✅ عکس انتخاب شد", color = Emerald, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
-                                    Text(imageName.ifBlank { "تصویر محصول" }, color = Color(0xFFE2E8F0), fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
+                                    Text(vm.imageName.ifBlank { "تصویر محصول" }, color = Color(0xFFE2E8F0), fontSize = 12.sp, fontWeight = FontWeight.Medium, maxLines = 1)
                                     Text("برای تغییر عکس کلیک کنید", color = Color(0xFF60A5FA), fontSize = 11.sp, fontWeight = FontWeight.Medium)
                                 }
                             }
@@ -469,8 +276,8 @@ fun AnikScreen() {
                                         .clickable {
                                             scope.launch {
                                                 val bmp = withContext(Dispatchers.IO) { BitmapUtils.decodeAsset(ctx, s.file) }
-                                                applyImage(bmp, s.label)
-                                                if (websiteUrl.isBlank()) websiteUrl = s.website
+                                                vm.applyImage(bmp, s.label)
+                                                if (vm.websiteUrl.isBlank()) vm.websiteUrl = s.website
                                             }
                                         }.padding(6.dp),
                                     horizontalAlignment = Alignment.CenterHorizontally, verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -491,7 +298,7 @@ fun AnikScreen() {
                     Spacer(Modifier.height(6.dp))
                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                         OutlinedTextField(
-                            value = websiteUrl, onValueChange = { websiteUrl = it },
+                            value = vm.websiteUrl, onValueChange = { vm.websiteUrl = it },
                             placeholder = { Text("https://rezonixshop.mynameusrnr.workers.dev/#shop", fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = P.dimmer, maxLines = 1) },
                             textStyle = TextStyle(fontSize = 12.sp, fontFamily = FontFamily.Monospace, color = P.text, textAlign = TextAlign.Left),
                             singleLine = true, modifier = Modifier.fillMaxWidth(), shape = RoundedCornerShape(12.dp),
@@ -501,21 +308,21 @@ fun AnikScreen() {
                             )
                         )
                     }
-                    if (websiteUrl.isNotBlank()) {
+                    if (vm.websiteUrl.isNotBlank()) {
                         Spacer(Modifier.height(6.dp))
                         Row(Modifier.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            if (detecting) CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp, color = Color(0xFF60A5FA))
-                            Text(detectNote.ifBlank { "رنگ برند:" }, color = if (detecting) Color(0xFF60A5FA) else P.label, fontSize = 11.sp, modifier = Modifier.weight(1f, false))
-                            if (!detecting) Box(Modifier.size(14.dp).clip(CircleShape).background(hexColor(brandColor)).border(1.dp, Color(0x33FFFFFF), CircleShape))
+                            if (vm.detecting) CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp, color = Color(0xFF60A5FA))
+                            Text(vm.detectNote.ifBlank { "رنگ برند:" }, color = if (vm.detecting) Color(0xFF60A5FA) else P.label, fontSize = 11.sp, modifier = Modifier.weight(1f, false))
+                            if (!vm.detecting) Box(Modifier.size(14.dp).clip(CircleShape).background(hexColor(vm.brandColor)).border(1.dp, Color(0x33FFFFFF), CircleShape))
                         }
                         // تم سایت: سه نقش اصلی/فرعی/تاکید — همان ردیف چیپ‌ها، بدون بخش جدید
-                        siteTheme?.let { th ->
+                        vm.siteTheme?.let { th ->
                             Spacer(Modifier.height(6.dp))
                             Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 listOf("اصلی" to th.primary, "فرعی" to th.secondary, "تاکید" to th.accent).forEach { (label, sc) ->
                                     Row(
                                         Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFF0F172A))
-                                            .border(1.dp, P.inputBorder, RoundedCornerShape(6.dp)).clickable { setBrand(sc) }
+                                            .border(1.dp, P.inputBorder, RoundedCornerShape(6.dp)).clickable { vm.setBrand(sc) }
                                             .padding(horizontal = 8.dp, vertical = 3.dp),
                                         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)
                                     ) {
@@ -535,21 +342,21 @@ fun AnikScreen() {
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     Text("نوع خروجی پس‌زمینه:", color = P.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 4.dp))
-                    ModeRow(mode == BgMode.SIMPLE, "حالت ساده (سفید)", "پس‌زمینه سفید خالص استاندارد با سایه استودیویی", Color.White) { mode = BgMode.SIMPLE }
-                    ModeRow(mode == BgMode.BRAND, "حالت برند (هماهنگ با تم سایت)", "پس‌زمینه نوری استودیویی با کد رنگ دلخواه یا تم سایت", hexColor(brandColor)) { mode = BgMode.BRAND }
+                    ModeRow(vm.mode == BgMode.SIMPLE, "حالت ساده (سفید)", "پس‌زمینه سفید خالص استاندارد با سایه استودیویی", Color.White) { vm.mode = BgMode.SIMPLE }
+                    ModeRow(vm.mode == BgMode.BRAND, "حالت برند (هماهنگ با تم سایت)", "پس‌زمینه نوری استودیویی با کد رنگ دلخواه یا تم سایت", hexColor(vm.brandColor)) { vm.mode = BgMode.BRAND }
 
-                    if (mode == BgMode.BRAND) {
+                    if (vm.mode == BgMode.BRAND) {
                         HorizontalDivider(color = Color(0x99334155), modifier = Modifier.padding(top = 4.dp))
                         Row(Modifier.fillMaxWidth().padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.SpaceBetween) {
                             Text("کد رنگ دلخواه (HEX):", color = P.label, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                             CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                 OutlinedTextField(
-                                    value = hexText,
+                                    value = vm.hexText,
                                     onValueChange = {
                                         if (it.length <= 7) {
-                                            hexText = it.uppercase()
+                                            vm.hexText = it.uppercase()
                                             if (Regex("^#?[0-9A-Fa-f]{6}$").matches(it.trim()))
-                                                brandColor = it.trim().uppercase().let { v -> if (v.startsWith("#")) v else "#$v" }
+                                                vm.brandColor = it.trim().uppercase().let { v -> if (v.startsWith("#")) v else "#$v" }
                                         }
                                     },
                                     singleLine = true, modifier = Modifier.width(118.dp),
@@ -563,15 +370,15 @@ fun AnikScreen() {
                                 )
                             }
                         }
-                        Box(Modifier.padding(horizontal = 6.dp)) { SwatchRow(EXTENDED_PALETTE, brandColor, 24) { setBrand(it) } }
-                        if (siteColors.isNotEmpty()) {
+                        Box(Modifier.padding(horizontal = 6.dp)) { SwatchRow(EXTENDED_PALETTE, vm.brandColor, 24) { vm.setBrand(it) } }
+                        if (vm.siteColors.isNotEmpty()) {
                             Column(Modifier.padding(horizontal = 6.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text("رنگ‌های استخراج‌شده از سایت شما:", color = P.dim, fontSize = 10.sp)
                                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                                    siteColors.forEach { sc ->
+                                    vm.siteColors.forEach { sc ->
                                         Row(
                                             Modifier.clip(RoundedCornerShape(6.dp)).background(Color(0xFF0F172A))
-                                                .border(1.dp, P.inputBorder, RoundedCornerShape(6.dp)).clickable { setBrand(sc) }
+                                                .border(1.dp, P.inputBorder, RoundedCornerShape(6.dp)).clickable { vm.setBrand(sc) }
                                                 .padding(horizontal = 8.dp, vertical = 3.dp),
                                             verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)
                                         ) {
@@ -593,7 +400,7 @@ fun AnikScreen() {
                     Row(Modifier.fillMaxWidth().padding(horizontal = 2.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                         Text("استایل سایه استودیویی:", color = P.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                         Text(
-                            when (shadow) {
+                            when (vm.shadow) {
                                 ShadowStyle.CONTACT -> "چسبیده به سطح زمین"
                                 ShadowStyle.FLOATING -> "شناور با فاصله از سطح"
                                 ShadowStyle.REFLECTION -> "انعکاس شیشه‌ای زیر کالا"
@@ -606,10 +413,38 @@ fun AnikScreen() {
                             .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(12.dp)).padding(4.dp),
                         horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
-                        SegButton("تماسی طبیعی", shadow == ShadowStyle.CONTACT, Modifier.weight(1f)) { shadow = ShadowStyle.CONTACT }
-                        SegButton("معلق سه‌بعدی", shadow == ShadowStyle.FLOATING, Modifier.weight(1f)) { shadow = ShadowStyle.FLOATING }
-                        SegButton("انعکاس آینه‌ای", shadow == ShadowStyle.REFLECTION, Modifier.weight(1f)) { shadow = ShadowStyle.REFLECTION }
+                        SegButton("تماسی طبیعی", vm.shadow == ShadowStyle.CONTACT, Modifier.weight(1f)) { vm.shadow = ShadowStyle.CONTACT }
+                        SegButton("معلق سه‌بعدی", vm.shadow == ShadowStyle.FLOATING, Modifier.weight(1f)) { vm.shadow = ShadowStyle.FLOATING }
+                        SegButton("انعکاس آینه‌ای", vm.shadow == ShadowStyle.REFLECTION, Modifier.weight(1f)) { vm.shadow = ShadowStyle.REFLECTION }
                     }
+                }
+
+                // ───── مدل هوش مصنوعی (دانلود اختیاری، بعد آفلاین) ─────
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(P.card)
+                        .border(1.dp, P.cardBorder, RoundedCornerShape(16.dp)).padding(12.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    Text("مدل هوش مصنوعی:", color = P.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold, modifier = Modifier.padding(horizontal = 4.dp))
+                    ModelRow(
+                        title = "Silueta — پیش‌فرض",
+                        sub = if (vm.siluetaInstalled) "فعال است · آفلاین" else "کیفیت نزدیک U²-Net کامل · یک‌بار دانلود ۴۳ مگابایت",
+                        installed = vm.siluetaInstalled, busy = vm.siluetaBusy, progress = vm.siluetaProgress,
+                        onAction = { if (vm.siluetaInstalled) vm.removeSilueta() else vm.downloadSilueta() },
+                        onCancel = { vm.cancelSiluetaDownload() }
+                    )
+                    HorizontalDivider(color = Color(0x99334155))
+                    ModelRow(
+                        title = "ORMBG — اولترا",
+                        sub = if (vm.ormbgInstalled) "فعال است · آفلاین" else "بهترین کیفیت (کلاس IS-Net) · یک‌بار دانلود ۱۷۶ مگابایت",
+                        installed = vm.ormbgInstalled, busy = vm.ormbgBusy, progress = vm.ormbgProgress,
+                        onAction = { if (vm.ormbgInstalled) vm.removeOrmbg() else vm.downloadOrmbg() },
+                        onCancel = { vm.cancelOrmbgDownload() }
+                    )
+                    Text(
+                        "بدون دانلود، مدل سبک داخل برنامه استفاده می‌شود. دانلود از گیت‌هاب است؛ بعد از آن همه‌چیز آفلاین کار می‌کند.",
+                        color = P.dim, fontSize = 10.sp
+                    )
                 }
 
                 // ───── ۵. اندازه خروجی و شفافیت ─────
@@ -623,11 +458,11 @@ fun AnikScreen() {
                         SIZE_LABELS.forEachIndexed { idx, label ->
                             Box(
                                 Modifier.weight(1f).clip(RoundedCornerShape(10.dp))
-                                    .background(if (sizePreset == idx) Blue else P.segBg)
-                                    .border(1.dp, if (sizePreset == idx) Blue else P.inputBorder, RoundedCornerShape(10.dp))
-                                    .clickable { sizePreset = idx }.padding(vertical = 8.dp, horizontal = 4.dp),
+                                    .background(if (vm.sizePreset == idx) Blue else P.segBg)
+                                    .border(1.dp, if (vm.sizePreset == idx) Blue else P.inputBorder, RoundedCornerShape(10.dp))
+                                    .clickable { vm.sizePreset = idx }.padding(vertical = 8.dp, horizontal = 4.dp),
                                 contentAlignment = Alignment.Center
-                            ) { Text(label, color = if (sizePreset == idx) Color.White else P.segOff, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1) }
+                            ) { Text(label, color = if (vm.sizePreset == idx) Color.White else P.segOff, fontSize = 11.sp, fontWeight = FontWeight.SemiBold, maxLines = 1) }
                         }
                     }
                     HorizontalDivider(color = Color(0x99334155))
@@ -637,23 +472,23 @@ fun AnikScreen() {
                             Text("بدون پس‌زمینه؛ برای چیدن روی هر طرحی", color = P.dim, fontSize = 10.sp)
                         }
                         Switch(
-                            checked = transparent, onCheckedChange = { transparent = it },
+                            checked = vm.transparent, onCheckedChange = { vm.transparent = it },
                             colors = SwitchDefaults.colors(checkedThumbColor = Color.White, checkedTrackColor = Blue, uncheckedThumbColor = P.dim, uncheckedTrackColor = P.inputBorder)
                         )
                     }
                 }
 
                 // ───── ۶. دکمه ساخت ─────
-                val canBuild = srcBitmap != null && !processing
+                val canBuild = vm.srcBitmap != null && !vm.processing
                 Button(
-                    onClick = { build() }, enabled = canBuild,
+                    onClick = { vm.build() }, enabled = canBuild,
                     modifier = Modifier.fillMaxWidth().height(52.dp), shape = RoundedCornerShape(16.dp),
                     colors = ButtonDefaults.buttonColors(
                         containerColor = Blue, contentColor = Color.White,
                         disabledContainerColor = Color(0xFF1E293B),
                         disabledContentColor = Color(0xFF64748B))
                 ) {
-                    if (processing) {
+                    if (vm.processing) {
                         CircularProgressIndicator(Modifier.size(16.dp), color = Color(0xFF94A3B8), strokeWidth = 2.dp)
                         Spacer(Modifier.width(8.dp))
                         Text("در حال پردازش و ساخت سایه استودیویی...", fontSize = 13.sp, fontWeight = FontWeight.Bold)
@@ -661,8 +496,8 @@ fun AnikScreen() {
                 }
 
                 // ───── ۷. نتیجه ─────
-                result?.let { res ->
-                    val (pw, ph) = SIZE_PRESETS[sizePreset]
+                vm.result?.let { res ->
+                    val (pw, ph) = SIZE_PRESETS[vm.sizePreset]
                     Column(
                         Modifier.fillMaxWidth().clip(RoundedCornerShape(24.dp)).background(P.resultBg)
                             .border(1.dp, Color(0xFF1E293B), RoundedCornerShape(24.dp)).padding(16.dp)
@@ -671,37 +506,37 @@ fun AnikScreen() {
                             Text("🖼 خروجی آماده ($pw × $ph px)", color = P.text, fontSize = 12.sp, fontWeight = FontWeight.Bold, modifier = Modifier.weight(1f))
                             Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                 Box(
-                                    Modifier.clip(RoundedCornerShape(8.dp)).background(if (compare) Blue else Color(0xFF1E293B))
+                                    Modifier.clip(RoundedCornerShape(8.dp)).background(if (vm.compare) Blue else Color(0xFF1E293B))
                                         .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
-                                        .clickable { compare = !compare; if (compare) refineMode = false }.padding(horizontal = 10.dp, vertical = 5.dp)
+                                        .clickable { vm.compare = !vm.compare; if (vm.compare) vm.refineMode = false }.padding(horizontal = 10.dp, vertical = 5.dp)
                                 ) { Text("👁 مقایسه", fontSize = 11.sp, color = Color.White) }
                                 Box(
-                                    Modifier.clip(RoundedCornerShape(8.dp)).background(if (refineMode) Blue else Color(0xFF1E293B))
+                                    Modifier.clip(RoundedCornerShape(8.dp)).background(if (vm.refineMode) Blue else Color(0xFF1E293B))
                                         .border(1.dp, Color(0xFF334155), RoundedCornerShape(8.dp))
-                                        .clickable { refineMode = !refineMode; if (refineMode) compare = false }.padding(horizontal = 10.dp, vertical = 5.dp)
+                                        .clickable { vm.refineMode = !vm.refineMode; if (vm.refineMode) vm.compare = false }.padding(horizontal = 10.dp, vertical = 5.dp)
                                 ) { Text("✏️ اصلاح", fontSize = 11.sp, color = Color.White) }
                             }
                         }
-                        if (refineMode) {
+                        if (vm.refineMode) {
                             Spacer(Modifier.height(8.dp))
                             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
                                 Text("روی قسمتی که اشتباه جدا شده بزن:", color = P.dim, fontSize = 11.sp, modifier = Modifier.weight(1f))
                                 Box(
-                                    Modifier.clip(RoundedCornerShape(8.dp)).background(if (refineFg) Emerald else Color(0xFF1E293B))
-                                        .clickable { refineFg = true }.padding(horizontal = 10.dp, vertical = 5.dp)
-                                ) { Text("محصول", fontSize = 11.sp, color = if (refineFg) Color(0xFF022C22) else P.label, fontWeight = FontWeight.Bold) }
+                                    Modifier.clip(RoundedCornerShape(8.dp)).background(if (vm.refineFg) Emerald else Color(0xFF1E293B))
+                                        .clickable { vm.refineFg = true }.padding(horizontal = 10.dp, vertical = 5.dp)
+                                ) { Text("محصول", fontSize = 11.sp, color = if (vm.refineFg) Color(0xFF022C22) else P.label, fontWeight = FontWeight.Bold) }
                                 Box(
-                                    Modifier.clip(RoundedCornerShape(8.dp)).background(if (!refineFg) Color(0xFFDC2626) else Color(0xFF1E293B))
-                                        .clickable { refineFg = false }.padding(horizontal = 10.dp, vertical = 5.dp)
+                                    Modifier.clip(RoundedCornerShape(8.dp)).background(if (!vm.refineFg) Color(0xFFDC2626) else Color(0xFF1E293B))
+                                        .clickable { vm.refineFg = false }.padding(horizontal = 10.dp, vertical = 5.dp)
                                 ) { Text("پس‌زمینه", fontSize = 11.sp, color = Color.White, fontWeight = FontWeight.Bold) }
                             }
                         }
-                        if (recentView != null) {
+                        if (vm.recentView != null) {
                             Spacer(Modifier.height(8.dp))
                             Row(Modifier.fillMaxWidth().padding(horizontal = 4.dp), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
                                 Text("در حال نمایش یکی از خروجی‌های اخیر", color = Color(0xFFFBBF24), fontSize = 11.sp, modifier = Modifier.weight(1f))
                                 Text("بازگشت به خروجی فعلی", color = Color(0xFF60A5FA), fontSize = 11.sp, fontWeight = FontWeight.Bold,
-                                    modifier = Modifier.clickable { recentView = null })
+                                    modifier = Modifier.clickable { vm.recentView = null })
                             }
                         }
                         Spacer(Modifier.height(10.dp))
@@ -712,43 +547,44 @@ fun AnikScreen() {
                         ) {
                             val previewWpx = with(LocalDensity.current) { maxWidth.toPx() }
                             val previewWidthDp = maxWidth.value
+                            val previewMaxWidth = maxWidth
                             val handleHalfPx = with(LocalDensity.current) { 14.dp.toPx() }.roundToInt()
-                            val shown = recentView ?: res.bitmap
+                            val shown = vm.recentView ?: res.bitmap
                             Image(shown.asImageBitmap(), null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit)
-                            if (recentView == null && compare && srcPreview != null) {
-                                Box(Modifier.fillMaxHeight().fillMaxWidth(comparePos).clip(RectangleShape)) {
-                                    Image(srcPreview.asImageBitmap(), null, Modifier.fillMaxHeight().width(maxWidth), contentScale = ContentScale.FillBounds)
+                            if (vm.recentView == null && vm.compare && srcPreview != null) {
+                                Box(Modifier.fillMaxHeight().fillMaxWidth(vm.comparePos).clip(RectangleShape)) {
+                                    Image(srcPreview.asImageBitmap(), null, Modifier.fillMaxHeight().width(previewMaxWidth), contentScale = ContentScale.FillBounds)
                                 }
-                                Box(Modifier.fillMaxHeight().width(2.dp).offset { IntOffset((comparePos * previewWpx).roundToInt(), 0) }.background(Color.White))
+                                Box(Modifier.fillMaxHeight().width(2.dp).offset { IntOffset((vm.comparePos * previewWpx).roundToInt(), 0) }.background(Color.White))
                                 Box(Modifier.fillMaxSize(), contentAlignment = Alignment.CenterStart) {
                                     Box(
-                                        Modifier.offset { IntOffset((comparePos * previewWpx).roundToInt() - handleHalfPx, 0) }
+                                        Modifier.offset { IntOffset((vm.comparePos * previewWpx).roundToInt() - handleHalfPx, 0) }
                                             .size(28.dp).clip(CircleShape).background(Color.White.copy(alpha = 0.92f)),
                                         contentAlignment = Alignment.Center
                                     ) { Text("↔", color = Color(0xFF0F172A), fontSize = 14.sp, fontWeight = FontWeight.Bold) }
                                 }
-                                Box(Modifier.fillMaxSize().pointerInput(compare) {
+                                Box(Modifier.fillMaxSize().pointerInput(vm.compare) {
                                     detectHorizontalDragGestures { _, dragAmount ->
-                                        comparePos = (comparePos + dragAmount / previewWpx).coerceIn(0.05f, 0.95f)
+                                        vm.comparePos = (vm.comparePos + dragAmount / previewWpx).coerceIn(0.05f, 0.95f)
                                     }
                                 })
                             }
-                            if (recentView == null && refineMode) {
-                                Box(Modifier.fillMaxSize().pointerInput(prepared, result, refineFg) {
-                                    detectTapGestures { off -> refineAt(off, previewWpx, previewWidthDp) }
+                            if (vm.recentView == null && vm.refineMode) {
+                                Box(Modifier.fillMaxSize().pointerInput(vm.prepared, vm.result, vm.refineFg) {
+                                    detectTapGestures { off -> vm.refineAt(off, previewWpx, previewWidthDp) }
                                 })
-                                if (refining) {
+                                if (vm.refining) {
                                     Box(Modifier.fillMaxSize().background(Color(0x660F172A)), contentAlignment = Alignment.Center) {
                                         CircularProgressIndicator(Modifier.size(28.dp), color = Color.White, strokeWidth = 3.dp)
                                     }
                                 }
                             }
                             Text(
-                                "$pw × $ph · PNG · ${res.engine}" + if (transparent) " · شفاف" else "",
+                                "$pw × $ph · PNG · ${res.engine}" + if (vm.transparent) " · شفاف" else "",
                                 color = Color.White, fontSize = 10.sp, fontFamily = FontFamily.Monospace,
                                 modifier = Modifier.align(Alignment.BottomStart).padding(10.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xBF000000)).padding(horizontal = 8.dp, vertical = 2.dp)
                             )
-                            if (res.mode == BgMode.BRAND && res.brandColor != null && recentView == null && !compare) {
+                            if (res.mode == BgMode.BRAND && res.brandColor != null && vm.recentView == null && !vm.compare) {
                                 Row(
                                     Modifier.align(Alignment.TopEnd).padding(10.dp).clip(RoundedCornerShape(6.dp)).background(Color(0xE60F172A)).padding(horizontal = 8.dp, vertical = 2.dp),
                                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)
@@ -767,48 +603,48 @@ fun AnikScreen() {
                             Button(
                                 onClick = {
                                     runCatching { Share.saveToGallery(ctx, res.bitmap) }
-                                        .onSuccess { toast("عکس با موفقیت ذخیره شد: $it") }
-                                        .onFailure { toast("ذخیره عکس ناموفق بود") }
+                                        .onSuccess { vm.toast("عکس با موفقیت ذخیره شد: $it") }
+                                        .onFailure { vm.toast("ذخیره عکس ناموفق بود") }
                                 },
                                 modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(12.dp),
                                 colors = ButtonDefaults.buttonColors(containerColor = Blue, contentColor = Color.White)
                             ) { Text("💾 دانلود", fontWeight = FontWeight.Bold, fontSize = 12.sp) }
                             OutlinedButton(
-                                onClick = { getLink() }, enabled = !linkBusy,
+                                onClick = { vm.getLink() }, enabled = !vm.linkBusy,
                                 modifier = Modifier.weight(1f).height(48.dp), shape = RoundedCornerShape(12.dp),
                                 border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF334155)),
                                 colors = ButtonDefaults.outlinedButtonColors(containerColor = Color(0xFF1E293B), contentColor = Emerald)
                             ) {
-                                if (linkBusy) {
+                                if (vm.linkBusy) {
                                     CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Emerald)
                                     Spacer(Modifier.width(6.dp)); Text("در حال آپلود...", fontSize = 12.sp, fontWeight = FontWeight.Bold)
                                 } else Text("🔗 دریافت لینک", fontWeight = FontWeight.Bold, fontSize = 12.sp)
                             }
                         }
 
-                        linkUrl?.let { url ->
+                        vm.linkUrl?.let { url ->
                             Spacer(Modifier.height(12.dp))
                             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(16.dp)).background(Color(0xE60F172A)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                                Text("لینک مستقیم تصویر ($linkHost) — برای تگ <img> سایت:", color = P.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
+                                Text("لینک مستقیم تصویر ($vm.linkHost) — برای تگ <img> سایت:", color = P.label, fontSize = 11.sp, fontWeight = FontWeight.SemiBold)
                                 Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                                     CompositionLocalProvider(LocalLayoutDirection provides LayoutDirection.Ltr) {
                                         Text(url, color = Emerald, fontSize = 10.sp, fontFamily = FontFamily.Monospace, maxLines = 1,
                                             modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(P.chipBg).padding(horizontal = 10.dp, vertical = 8.dp))
                                     }
-                                    Box(Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF1E293B)).clickable { Share.copy(ctx, url); toast("لینک کپی شد!") }.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                                    Box(Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF1E293B)).clickable { Share.copy(ctx, url); vm.toast("لینک کپی شد!") }.padding(horizontal = 10.dp, vertical = 8.dp)) {
                                         Text("کپی آدرس", fontSize = 10.sp, color = P.label, fontWeight = FontWeight.Medium)
                                     }
                                 }
                                 Text(
                                     "</> کپی تگ آماده <img loading=\"lazy\"> برای سرعت سایت", color = Color(0xFF60A5FA), fontSize = 10.sp, fontWeight = FontWeight.Medium,
                                     modifier = Modifier.clickable {
-                                        Share.copy(ctx, "<img src=\"$url\" alt=\"${imageName.ifBlank { "Product" }}\" width=\"1000\" height=\"1000\" loading=\"lazy\" decoding=\"async\" />")
-                                        toast("کد تگ <img> بهینه‌شده برای سرعت سایت کپی شد!")
+                                        Share.copy(ctx, "<img src=\"$url\" alt=\"${vm.imageName.ifBlank { "Product" }}\" width=\"1000\" height=\"1000\" loading=\"lazy\" decoding=\"async\" />")
+                                        vm.toast("کد تگ <img> بهینه‌شده برای سرعت سایت کپی شد!")
                                     }
                                 )
                             }
                         }
-                        linkError?.let { err ->
+                        vm.linkError?.let { err ->
                             Spacer(Modifier.height(12.dp))
                             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0x33DC2626)).padding(10.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                                 Text("آپلود انجام نشد. جزئیات خطا:", color = Color(0xFFFCA5A5), fontSize = 11.sp, fontWeight = FontWeight.Bold)
@@ -830,13 +666,22 @@ fun AnikScreen() {
                             Text("پردازش دسته‌ای", color = P.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
                             Text("تا ۶ عکس با همان تنظیمات فعلی", color = P.dim, fontSize = 10.sp)
                         }
-                        Button(
-                            onClick = { batchPicker.launch("image/*") }, enabled = !batchBusy,
-                            shape = RoundedCornerShape(10.dp), modifier = Modifier.height(38.dp),
-                            colors = ButtonDefaults.buttonColors(containerColor = Blue, contentColor = Color.White)
-                        ) { Text(if (batchBusy) "در حال پردازش..." else "انتخاب چند عکس", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                            if (vm.batchBusy) {
+                                Button(
+                                    onClick = { vm.cancelBatch() },
+                                    shape = RoundedCornerShape(10.dp), modifier = Modifier.height(38.dp),
+                                    colors = ButtonDefaults.buttonColors(containerColor = Color(0xFFDC2626), contentColor = Color.White)
+                                ) { Text("لغو", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                            }
+                            Button(
+                                onClick = { batchPicker.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly)) }, enabled = !vm.batchBusy,
+                                shape = RoundedCornerShape(10.dp), modifier = Modifier.height(38.dp),
+                                colors = ButtonDefaults.buttonColors(containerColor = Blue, contentColor = Color.White)
+                            ) { Text(if (vm.batchBusy) "در حال پردازش..." else "انتخاب چند عکس", fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                        }
                     }
-                    batchItems.forEachIndexed { idx, item ->
+                    vm.batchItems.forEachIndexed { idx, item ->
                         Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Color(0xFF0F172A)).border(1.dp, P.inputBorder, RoundedCornerShape(12.dp)).padding(8.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
                             Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
                                 Box(Modifier.size(52.dp).clip(RoundedCornerShape(8.dp)).background(Color.White), contentAlignment = Alignment.Center) {
@@ -851,10 +696,10 @@ fun AnikScreen() {
                                     )
                                 }
                                 if (item.result != null) {
-                                    Box(Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF1E293B)).clickable { batchSave(idx) }.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                                    Box(Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF1E293B)).clickable { vm.batchSave(idx) }.padding(horizontal = 10.dp, vertical = 8.dp)) {
                                         Text("💾", fontSize = 14.sp)
                                     }
-                                    Box(Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF1E293B)).clickable { batchLink(idx) }.padding(horizontal = 10.dp, vertical = 8.dp)) {
+                                    Box(Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF1E293B)).clickable { vm.batchLink(idx) }.padding(horizontal = 10.dp, vertical = 8.dp)) {
                                         if (item.busy) CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp, color = Emerald)
                                         else Text("🔗", fontSize = 14.sp)
                                     }
@@ -866,7 +711,7 @@ fun AnikScreen() {
                                         Text(url, color = Emerald, fontSize = 10.sp, fontFamily = FontFamily.Monospace, maxLines = 1,
                                             modifier = Modifier.weight(1f).clip(RoundedCornerShape(8.dp)).background(P.chipBg).padding(horizontal = 10.dp, vertical = 6.dp))
                                     }
-                                    Box(Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF1E293B)).clickable { Share.copy(ctx, url); toast("لینک کپی شد!") }.padding(horizontal = 10.dp, vertical = 6.dp)) {
+                                    Box(Modifier.clip(RoundedCornerShape(8.dp)).background(Color(0xFF1E293B)).clickable { Share.copy(ctx, url); vm.toast("لینک کپی شد!") }.padding(horizontal = 10.dp, vertical = 6.dp)) {
                                         Text("کپی", fontSize = 10.sp, color = P.label, fontWeight = FontWeight.Medium)
                                     }
                                 }
@@ -876,16 +721,16 @@ fun AnikScreen() {
                 }
 
                 // ───── خروجی‌های اخیر ─────
-                if (recents.isNotEmpty()) {
+                if (vm.recents.isNotEmpty()) {
                     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                         Text("خروجی‌های اخیر:", color = P.dim, fontSize = 11.sp, fontWeight = FontWeight.Medium)
                         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            recents.forEach { bmp ->
+                            vm.recents.forEach { bmp ->
                                 Image(
                                     bmp.asImageBitmap(), null,
                                     Modifier.size(72.dp).clip(RoundedCornerShape(10.dp)).border(1.dp, P.cardBorder, RoundedCornerShape(10.dp))
                                         .background(Color.White)
-                                        .clickable { recentView = bmp },
+                                        .clickable { vm.recentView = bmp },
                                     contentScale = ContentScale.Crop
                                 )
                             }
@@ -898,7 +743,7 @@ fun AnikScreen() {
         }
 
         // ───── Toast ─────
-        toastMsg?.let { m ->
+        vm.toastMsg?.let { m ->
             Row(
                 Modifier.align(Alignment.BottomCenter).navigationBarsPadding().padding(bottom = 24.dp, start = 16.dp, end = 16.dp)
                     .clip(RoundedCornerShape(50)).background(Color(0xF20F172A)).border(1.dp, Color(0xFF1E293B), RoundedCornerShape(50))
@@ -959,6 +804,41 @@ private fun SwatchRow(colors: List<String>, selected: String, size: Int, onPick:
                     .clickable { onPick(c) }
             )
         }
+    }
+}
+
+@Composable
+private fun ModelRow(
+    title: String, sub: String, installed: Boolean, busy: Boolean, progress: Float,
+    onAction: () -> Unit, onCancel: () -> Unit
+) {
+    val P = LocalPal.current
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween, verticalAlignment = Alignment.CenterVertically) {
+            Column(Modifier.weight(1f)) {
+                Text(title, color = P.label, fontSize = 12.sp, fontWeight = FontWeight.SemiBold)
+                Text(sub, color = if (installed) Emerald else P.dim, fontSize = 10.sp)
+            }
+            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (busy) {
+                    Box(
+                        Modifier.clip(RoundedCornerShape(10.dp)).background(Color(0xFFDC2626))
+                            .clickable { onCancel() }.padding(horizontal = 12.dp, vertical = 8.dp)
+                    ) { Text("لغو", color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold) }
+                }
+                Box(
+                    Modifier.clip(RoundedCornerShape(10.dp))
+                        .background(if (installed) P.selRow else Blue)
+                        .clickable(enabled = !busy) { onAction() }.padding(horizontal = 14.dp, vertical = 8.dp)
+                ) {
+                    Text(
+                        if (busy) "${(progress * 100).toInt()}٪" else if (installed) "حذف" else "دانلود",
+                        color = Color.White, fontSize = 12.sp, fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        }
+        if (busy) LinearProgressIndicator(progress = { progress }, modifier = Modifier.fillMaxWidth(), color = Blue)
     }
 }
 

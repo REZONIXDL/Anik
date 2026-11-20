@@ -72,6 +72,7 @@ object ImageProcessor {
         val c = Canvas(out)
         c.drawColor(pad)
         c.drawBitmap(scaled, (size - w) / 2f, (size - h) / 2f, Paint(Paint.FILTER_BITMAP_FLAG))
+        scaled.recycle()
         return out
     }
 
@@ -308,7 +309,7 @@ object ImageProcessor {
             val cleaned = IntArray(p) { if (bgAi[it]) 0 else aiAlpha[it] }
             val (refinedAi, _) = smartRefine(lab, cleaned, edge, w, h)
             alpha = refinedAi
-            engine = "هوش مصنوعی"
+            engine = if (AiSegmenter.lastModel == "ORMBG") "هوش مصنوعی پرو" else "هوش مصنوعی"
         } else {
             // رنگ پس‌زمینه = میانگین Lab گوشه‌ها
             var mL = 0f; var mA = 0f; var mB = 0f; var cnt = 0
@@ -431,6 +432,45 @@ object ImageProcessor {
             shader = RadialGradient(cx, cy, max(r, 1f), stops.map { it.second }.toIntArray(), stops.map { it.first }.toFloatArray(), Shader.TileMode.CLAMP)
         }
 
+    /** جایگذاری سوژه روی بوم خروجی — همان محاسبه render()؛ برای هم‌ترازی پیش‌نمایش «قبل». */
+    data class Placement(val scale: Float, val dx: Int, val dy: Int, val wpx: Int, val hpx: Int, val ground: Int)
+
+    private fun computePlacement(prep: Prepared, shadow: ShadowStyle, width: Int, height: Int): Placement {
+        val subject = prep.subject
+        val D = subject.bmp.width; val H = subject.bmp.height
+        val s = min(width, height).toFloat()
+        val k = s / 1000f
+        val r = s * 0.8f
+        var scale = min(r / max(D, 1), r / max(H, 1))
+        if (shadow == ShadowStyle.REFLECTION) {
+            // انعکاس ۴۲٪ ارتفاع سوژه است و باید کامل در بوم جا شود؛
+            // در غیر این صورت انعکاس محصول‌های بلند از پایین بوم بریده می‌شد.
+            val maxHpx = (height / 2f + 55f * k + 2f) / 0.92f
+            scale = min(scale, maxHpx / max(H, 1))
+        }
+        val wpx = (D * scale).roundToInt(); val hpx = (H * scale).roundToInt()
+        val dx = ((width - wpx) / 2f).roundToInt()
+        var dy = ((height - hpx) / 2f - 15f * k).roundToInt()
+        if (shadow == ShadowStyle.FLOATING) dy = max((40f * k).roundToInt(), dy - (32f * k).roundToInt())
+        else if (shadow == ShadowStyle.REFLECTION) dy = max((35f * k).roundToInt(), dy - (40f * k).roundToInt())
+        val ground = dy + (subject.maxBottom * scale).roundToInt()
+        return Placement(scale, dx, dy, wpx, hpx, ground)
+    }
+
+    /** پیش‌نمایش «قبل» هم‌تراز با خروجی: مربع کاری با همان جایگذاری رندر روی بوم خروجی. */
+    fun buildBeforePreview(prep: Prepared, width: Int, height: Int, shadow: ShadowStyle): Bitmap {
+        val pl = computePlacement(prep, shadow, width, height)
+        val out = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+        val c = Canvas(out)
+        c.drawColor(Color.WHITE)
+        val m = android.graphics.Matrix().apply {
+            postScale(pl.scale, pl.scale)
+            postTranslate(pl.dx - prep.subject.ox * pl.scale, pl.dy - prep.subject.oy * pl.scale)
+        }
+        c.drawBitmap(prep.sq, m, Paint(Paint.FILTER_BITMAP_FLAG))
+        return out
+    }
+
     /** مرحله ۲: ساخت بوم با پس‌زمینه و سایه — اندازه دلخواه + حالت شفاف */
     fun render(
         prep: Prepared, mode: BgMode, shadow: ShadowStyle, brandHex: String?,
@@ -457,20 +497,7 @@ object ImageProcessor {
                 radialPaint(width / 2f, height * 0.44f, s * 0.72f, stops))
         } else if (!transparent) c.drawColor(Color.WHITE)
 
-        val r = s * 0.8f
-        var scale = min(r / max(D, 1), r / max(H, 1))
-        if (shadow == ShadowStyle.REFLECTION) {
-            // انعکاس ۴۲٪ ارتفاع سوژه است و باید کامل در بوم جا شود؛
-            // در غیر این صورت انعکاس محصول‌های بلند از پایین بوم بریده می‌شد.
-            val maxHpx = (height / 2f + 55f * k + 2f) / 0.92f
-            scale = min(scale, maxHpx / max(H, 1))
-        }
-        val wpx = (D * scale).roundToInt(); val hpx = (H * scale).roundToInt()
-        val dx = ((width - wpx) / 2f).roundToInt()
-        var dy = ((height - hpx) / 2f - 15f * k).roundToInt()
-        if (shadow == ShadowStyle.FLOATING) dy = max((40f * k).roundToInt(), dy - (32f * k).roundToInt())
-        else if (shadow == ShadowStyle.REFLECTION) dy = max((35f * k).roundToInt(), dy - (40f * k).roundToInt())
-        val ground = dy + (subject.maxBottom * scale).roundToInt()
+        val (scale, dx, dy, wpx, hpx, ground) = computePlacement(prep, shadow, width, height)
         val cxs = dx + wpx / 2f
         val filter = Paint(Paint.FILTER_BITMAP_FLAG or Paint.ANTI_ALIAS_FLAG)
 
@@ -490,6 +517,7 @@ object ImageProcessor {
                 }
                 rc.drawRect(0f, 0f, wpx.toFloat(), refH.toFloat(), gp)
                 c.drawBitmap(rb, dx.toFloat(), (ground - 2).toFloat(), null)
+                rb.recycle()
                 val a = wpx * 0.38f
                 val p = radialPaint(cxs, ground.toFloat(), a, listOf(0f to blackA(if (simple) 0.16f else 0.32f), 1f to blackA(0f)))
                 c.drawOval(RectF(cxs - a, ground - 4f * k, cxs + a, ground + 4f * k), p)
@@ -508,6 +536,8 @@ object ImageProcessor {
                 else listOf(0f to blackA(0.26f), 0.55f to blackA(0.10f), 1f to blackA(0f))
                 c.drawOval(RectF(cxs - rx, cy - ry, cxs + rx, cy + ry), radialPaint(cxs, cy, rx, stops))
                 val band = max(8, (H * 0.03f).roundToInt())
+                val st = if (simple) listOf(0f to blackA(0.24f), 0.5f to blackA(0.08f), 1f to blackA(0f))
+                else listOf(0f to blackA(0.42f), 0.55f to blackA(0.14f), 1f to blackA(0f))
                 var col = 0
                 while (col < D) {
                     val t = subject.bottoms[col]
@@ -515,8 +545,6 @@ object ImageProcessor {
                         val x = (dx + (col * scale).roundToInt()).toFloat()
                         val y = (dy + (t * scale).roundToInt()).toFloat()
                         val a = max(4f, scale * 3.5f)
-                        val st = if (simple) listOf(0f to blackA(0.24f), 0.5f to blackA(0.08f), 1f to blackA(0f))
-                        else listOf(0f to blackA(0.42f), 0.55f to blackA(0.14f), 1f to blackA(0f))
                         c.drawOval(RectF(x - a * 1.8f, y + 1 - 4f * k, x + a * 1.8f, y + 1 + 4f * k), radialPaint(x, y, a * 2.2f, st))
                     }
                     col += 2

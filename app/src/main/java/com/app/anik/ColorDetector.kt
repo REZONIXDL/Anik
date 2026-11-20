@@ -155,17 +155,21 @@ object ColorDetector {
                 c.setRequestProperty("User-Agent", UA)
                 c.setRequestProperty("Accept", "*/*")
                 c.setRequestProperty("Accept-Language", "fa,en;q=0.8")
-                val code = c.responseCode
-                if (code in 300..399) {
-                    val loc = c.getHeaderField("Location") ?: return null
-                    cur = URL(URL(cur), loc).toString(); c.disconnect(); continue
-                }
-                if (code !in 200..299) return null
-                return c.inputStream.use { ins ->
-                    val out = java.io.ByteArrayOutputStream()
-                    val buf = ByteArray(16384)
-                    while (out.size() < max) { val n = ins.read(buf); if (n < 0) break; out.write(buf, 0, n) }
-                    out.toByteArray()
+                try {
+                    val code = c.responseCode
+                    if (code in 300..399) {
+                        val loc = c.getHeaderField("Location") ?: return null
+                        cur = URL(URL(cur), loc).toString(); continue
+                    }
+                    if (code !in 200..299) return null
+                    return c.inputStream.use { ins ->
+                        val out = java.io.ByteArrayOutputStream()
+                        val buf = ByteArray(16384)
+                        while (out.size() < max) { val n = ins.read(buf); if (n < 0) break; out.write(buf, 0, n) }
+                        out.toByteArray()
+                    }
+                } finally {
+                    c.disconnect()
                 }
             }
         } catch (_: Exception) { }
@@ -247,7 +251,11 @@ object ColorDetector {
         var target = rawUrl.trim()
         if (!Regex("^https?://", RegexOption.IGNORE_CASE).containsMatchIn(target)) target = "https://$target"
         val pool = Pool()
-        val htmlBytes = withContext(Dispatchers.IO) { fetch(target, 800_000) }
+        // اول https؛ اگر سایت https نداشت (بعضی سایت‌های ایرانی)، http را امتحان کن
+        val htmlBytes = withContext(Dispatchers.IO) {
+            fetch(target, 800_000)
+                ?: if (target.startsWith("https://", ignoreCase = true)) fetch("http://" + target.substring(8), 800_000) else null
+        }
         if (htmlBytes != null) {
             val html = String(htmlBytes, Charsets.UTF_8)
             meta(html, "theme-color")?.let { c -> parseCss(c)?.let { pool.bonus(it, 100.0, "theme-color سایت") } }

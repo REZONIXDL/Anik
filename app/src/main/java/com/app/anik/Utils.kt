@@ -35,9 +35,14 @@ object BitmapUtils {
             ExifInterface.ORIENTATION_ROTATE_270 -> m.postRotate(270f)
             ExifInterface.ORIENTATION_FLIP_HORIZONTAL -> m.postScale(-1f, 1f)
             ExifInterface.ORIENTATION_FLIP_VERTICAL -> m.postScale(1f, -1f)
+            // ۵ و ۷: چرخش + آینه (عکس‌های آیفون/بعضی گوشی‌ها) — بدون این‌ها عکس کج می‌افتاد
+            ExifInterface.ORIENTATION_TRANSPOSE -> { m.postRotate(90f); m.postScale(-1f, 1f) }
+            ExifInterface.ORIENTATION_TRANSVERSE -> { m.postRotate(270f); m.postScale(-1f, 1f) }
             else -> return bmp
         }
-        return Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+        val rotated = Bitmap.createBitmap(bmp, 0, 0, bmp.width, bmp.height, m, true)
+        if (rotated !== bmp) bmp.recycle()
+        return rotated
     }
 }
 
@@ -48,10 +53,22 @@ object Share {
             put(MediaStore.MediaColumns.DISPLAY_NAME, name)
             put(MediaStore.MediaColumns.MIME_TYPE, "image/png")
             put(MediaStore.MediaColumns.RELATIVE_PATH, Environment.DIRECTORY_PICTURES + "/Anik")
+            // IS_PENDING: تا نوشتن کامل نشود، گالری فایل نیمه‌کاره را نشان نمی‌دهد
+            put(MediaStore.MediaColumns.IS_PENDING, 1)
         }
         val uri = ctx.contentResolver.insert(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, values)
             ?: throw IllegalStateException("save failed")
-        ctx.contentResolver.openOutputStream(uri)?.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        try {
+            val out = ctx.contentResolver.openOutputStream(uri)
+                ?: throw IllegalStateException("save failed")
+            out.use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+        } catch (e: Throwable) {
+            runCatching { ctx.contentResolver.delete(uri, null, null) }
+            throw e
+        }
+        values.clear()
+        values.put(MediaStore.MediaColumns.IS_PENDING, 0)
+        ctx.contentResolver.update(uri, values, null, null)
         return name
     }
 

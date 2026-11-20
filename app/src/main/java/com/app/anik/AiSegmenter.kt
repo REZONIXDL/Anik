@@ -5,37 +5,31 @@ import android.graphics.Bitmap
 import java.io.File
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
-import java.security.MessageDigest
 import org.tensorflow.lite.DataType
 import org.tensorflow.lite.Interpreter
 
 /**
- * موتور هوش مصنوعی آفلاین (v3.1) — جداسازی محصول با مدل U2NetP و ران‌تایم LiteRT.
+ * موتور هوش مصنوعی آفلاین (v3.4) — سه سطح، همه آفلاین بعد از نصب:
  *
- * چرا این ترکیب:
- *  - LiteRT 1.4.0 جانشین رسمی TFLite است و فایل `.so` آن (arm64) با تراز **16KB**
- *    ساخته شده (با readelf تایید شده: هر سه سگمنت LOAD ‏0x4000)؛ پس خطای 16KB
- *    گوگل‌پلی که در v2.1 رفع شده بود برنمی‌گردد. نسخه قدیمی TFLite 2.16.1 تراز 4KB
- *    داشت و به همین دلیل در v3.0 کنار گذاشته شده بود.
- *  - مدل U2NetP (نسخه سبک U²-Net برای salient object detection) روی عکس محصول
- *    تست واقعی شده: میانگین ماسک داخل سوژه ۰٫۸۵ در برابر ۰٫۰۰۲ بیرون آن.
- *    مدل DeepLabV3 که در v3.0 بررسی شده بود برای محصول مناسب نیست (۸۵٪ سوژه را
- *    پس‌زمینه تشخیص می‌دهد) و استفاده نشده است.
+ *  ۱. ORMBG (اولترا، دانلودی ~۱۷۶ مگ): بهترین کیفیت — کلاس IS-Net، ورودی ۱۰۲۴.
+ *  ۲. Silueta (پیش‌فرض، دانلودی ~۴۳ مگ): نزدیک U²-Net کامل، ورودی ۳۲۰، MIT.
+ *  ۳. U2NetP (داخل APK، ۴٫۵۶ مگ): همیشه در دسترس؛ اگر دو مدل بالا نصب
+ *     نباشند، همین استفاده می‌شود.
  *
- * قرارداد مدل (تاییدشده با اجرای واقعی):
- *  - ورودی: float32 ‏[1,320,320,3] ‏NHWC ‏RGB؛ اول به ۳۲۰×۳۲۰ تغییر اندازه داده
- *    می‌شود (بدون letterbox)، بعد هر کانال بر بزرگ‌ترین مقدار کانال در کل عکس
- *    تقسیم می‌شود و سپس (x - mean) / std با میانگین/انحراف ImageNet اعمال می‌شود.
- *  - خروجی: float32 ‏[1,320,320,1] ‏sigmoid؛ با min-max به ۰..۱ نرمال و بعد به
- *    اندازه مربع کاری (۸۰۰×۸۰۰) برگردانده می‌شود.
+ * اگر هیچ‌کدام در دسترس نباشد، segment() مقدار null می‌دهد و ImageProcessor
+ * به‌طور خودکار به موتور کلاسیک برمی‌گردد — اپ هیچ‌وقت به‌خاطر موتور AI
+ * کرش نمی‌کند.
  *
- * مدل داخل خود APK است (assets/models/u2netp.tflite، ‏۴٫۵۶ مگابایت) و در اولین
- * استفاده به حافظه داخلی کپی و با SHA-256 تایید می‌شود؛ بعد از آن کاملاً آفلاین
- * کار می‌کند و هیچ عکسی به هیچ سروری فرستاده نمی‌شود.
+ * قرارداد U2NetP (تاییدشده با اجرای واقعی + کارت رسمی litert-community/U-2-Net):
+ *  - ورودی: float32 ‏[1,320,320,3] ‏NHWC ‏RGB؛ اول به ۳۲۰×۳۲۰ تغییر اندازه،
+ *    بعد هر کانال بر بزرگ‌ترین مقدار کانال در کل عکس تقسیم، سپس
+ *    ‏(x - mean) / std با میانگین/انحراف ImageNet.
+ *  - خروجی: float32 ‏[1,320,320,1] ‏sigmoid؛ مستقیم به آلفا تبدیل می‌شود
+ *    (در v3.4 کشش min-max حذف شد — خروجی sigmoid کالیبره است و min-max یک
+ *    پیکسل نویزی را به کل ماسک سرایت می‌داد).
  *
- * اگر مدل لود نشود یا استنتاج خطا بدهد، segment() مقدار null برمی‌گرداند و
- * ImageProcessor به‌طور خودکار به موتور کلاسیک برمی‌گردد — اپ هیچ‌وقت به‌خاطر
- * موتور AI کرش نمی‌کند.
+ * مدل U2NetP داخل خود APK است (assets/models/u2netp.tflite، ‏۴٫۵۶ مگابایت)
+ * و در اولین استفاده به حافظه داخلی کپی و با SHA-256 تایید می‌شود.
  */
 object AiSegmenter {
 
@@ -59,13 +53,31 @@ object AiSegmenter {
 
     private val lock = Any()
 
+    /** آخرین مدلی که ماسک را ساخت — ImageProcessor برای برچسب موتور می‌خواند. */
+    @Volatile
+    var lastModel: String = "U2NetP"
+        private set
+
     /** فقط Context برنامه را نگه می‌دارد؛ هیچ ورودی/خروجی اینجا انجام نمی‌شود. */
     fun init(context: Context) {
         appContext = context.applicationContext
+        SiluetaSegmenter.init(context)
+        OrmbgSegmenter.init(context)
     }
 
     /** آیا موتور AI آماده است؟ اولین فراخوانی مدل را لود می‌کند. */
     fun available(): Boolean = ensureLoaded() != null
+
+    /** خطای قبلی هر سه موتور را پاک کن تا لود دوباره امتحان شود. */
+    fun reset() {
+        synchronized(lock) {
+            failed = false
+            try { interpreter?.close() } catch (_: Throwable) { }
+            interpreter = null
+        }
+        SiluetaSegmenter.reset()
+        OrmbgSegmenter.reset()
+    }
 
     private fun ensureLoaded(): Interpreter? {
         interpreter?.let { return it }
@@ -76,7 +88,7 @@ object AiSegmenter {
             val ctx = appContext ?: return null
             return try {
                 val modelFile = prepareModelFile(ctx) ?: run { failed = true; return null }
-                val options = Interpreter.Options().setNumThreads(NUM_THREADS)
+                val options = Interpreter.Options().setNumThreads(NUM_THREADS).setUseXNNPACK(true)
                 val it = Interpreter(modelFile, options)
                 // خودآزمایی: ورودی/خروجی باید دقیقاً قرارداد U2NetP باشد؛
                 // اگر فایل مدل اشتباهی بسته شده باشد، موتور غیرفعال می‌شود نه اینکه
@@ -115,19 +127,7 @@ object AiSegmenter {
         }
     }
 
-    private fun sha256(file: File): String? {
-        return try {
-            val digest = MessageDigest.getInstance("SHA-256")
-            file.inputStream().use { stream ->
-                val buf = ByteArray(8192)
-                var n: Int
-                while (stream.read(buf).also { n = it } != -1) digest.update(buf, 0, n)
-            }
-            digest.digest().joinToString("") { "%02x".format(it) }
-        } catch (_: Throwable) {
-            null
-        }
-    }
+    private fun sha256(file: File): String? = ModelDownloader.sha256(file)
 
     /**
      * اجرای مدل روی مربع کاری؛ خروجی آلفای نرم ۰..۲۵۵ در همان اندازه مربع،
@@ -139,6 +139,24 @@ object AiSegmenter {
      * پس استنتاج با synchronized سریال می‌شود (پردازش دسته‌ای هم ترتیبی است).
      */
     fun segment(sq: Bitmap): IntArray? {
+        // v3.4: اول ORMBG (اگر کاربر دانلود کرده)، بعد Silueta (پیش‌فرض دانلودی)،
+        // وگرنه U2NetP داخل APK با میانگین‌گیری آینه‌ای (TTA).
+        OrmbgSegmenter.segment(sq)?.let { lastModel = "ORMBG"; return it }
+        SiluetaSegmenter.segment(sq)?.let { lastModel = "Silueta"; return it }
+        val a = segmentOnce(sq) ?: return null
+        lastModel = "U2NetP"
+        val w = sq.width; val h = sq.height
+        val m = android.graphics.Matrix().apply { preScale(-1f, 1f) }
+        val flipped = Bitmap.createBitmap(sq, 0, 0, w, h, m, true)
+        val b = try { segmentOnce(flipped) } finally { if (flipped !== sq) flipped.recycle() } ?: return a
+        // b در حالت آینه‌ای است؛ برگردان و با a میانگین بگیر (لبه‌ها پایدارتر می‌شوند)
+        return IntArray(w * h) { i ->
+            val y = i / w; val x = i % w
+            (a[i] + b[y * w + (w - 1 - x)]) / 2
+        }
+    }
+
+    private fun segmentOnce(sq: Bitmap): IntArray? {
         val it = ensureLoaded() ?: return null
         val w = sq.width; val h = sq.height
         if (w <= 0 || h <= 0) return null
@@ -186,22 +204,15 @@ object AiSegmenter {
     }
 
     /**
-     * min-max روی خروجی sigmoid + برگرداندن ماسک به اندازه مربع کاری با
+     * خروجی sigmoid مستقیم به آلفا + برگرداندن ماسک به اندازه مربع کاری با
      * درون‌یابی دوخطی (لبه نرم حفظ می‌شود)؛ خروجی منحط null می‌دهد.
      */
     private fun postprocess(outBuf: ByteBuffer, w: Int, h: Int): IntArray? {
         val floats = FloatArray(SIZE * SIZE)
         outBuf.asFloatBuffer().get(floats)
-        var minV = Float.MAX_VALUE; var maxV = -Float.MAX_VALUE
-        for (v in floats) {
-            if (v < minV) minV = v
-            if (v > maxV) maxV = v
-        }
-        val range = maxV - minV
-        if (range < 1e-6f) return null
         val gray = IntArray(SIZE * SIZE)
         for (i in floats.indices) {
-            val v = ((floats[i] - minV) / range * 255f).toInt().coerceIn(0, 255)
+            val v = (floats[i] * 255f).toInt().coerceIn(0, 255)
             gray[i] = (0xFF shl 24) or (v shl 16) or (v shl 8) or v
         }
         val maskBmp = Bitmap.createBitmap(SIZE, SIZE, Bitmap.Config.ARGB_8888)
@@ -226,5 +237,7 @@ object AiSegmenter {
             try { interpreter?.close() } catch (_: Throwable) { }
             interpreter = null
         }
+        SiluetaSegmenter.close()
+        OrmbgSegmenter.close()
     }
 }

@@ -90,9 +90,13 @@ object ImageHosts {
         c.connectTimeout = 10000; c.readTimeout = 15000
         c.setRequestProperty("User-Agent", UA)
         c.setRequestProperty("Accept-Language", "fa,en;q=0.8")
-        val code = c.responseCode
-        if (code !in 200..299) throw Failure("HTTP $code")
-        return c.inputStream.bufferedReader().use { it.readText() }
+        try {
+            val code = c.responseCode
+            if (code !in 200..299) throw Failure("HTTP $code")
+            return c.inputStream.bufferedReader().use { it.readText() }
+        } finally {
+            c.disconnect()
+        }
     }
 
     private fun multipart(url: String, origin: String, fields: Map<String, String>, fileField: String, file: ByteArray, fileName: String): String {
@@ -147,6 +151,7 @@ object ImageHosts {
         return "پاسخ نامعتبر از سرور: " + body.take(140)
     }
 
+    /** فقط سربرگ (HEAD) + در صورت نیاز ۱ کیلوبایت اول — نه دانلود کل عکس روی دیتای موبایل. */
     private fun verify(url: String) {
         var last = "ناموفق"
         for (i in 0 until 3) {
@@ -154,11 +159,28 @@ object ImageHosts {
                 val c = URL(url).openConnection() as HttpURLConnection
                 c.connectTimeout = 8000; c.readTimeout = 15000
                 c.setRequestProperty("User-Agent", UA)
-                val type = c.contentType.orEmpty()
-                val ok = c.responseCode in 200..299 && type.startsWith("image/")
-                val size = if (ok) c.inputStream.use { ins -> var n = 0L; val b = ByteArray(8192); while (true) { val r = ins.read(b); if (r < 0) break; n += r }; n } else 0L
-                if (ok && size > 500) return
-                last = "HTTP ${c.responseCode} / $type"
+                c.requestMethod = "HEAD"
+                try {
+                    val type = c.contentType.orEmpty()
+                    val len = c.contentLengthLong
+                    if (c.responseCode in 200..299 && type.startsWith("image/") && len > 500) return
+                } finally {
+                    c.disconnect()
+                }
+                // بعضی هاست‌ها HEAD را قبول نمی‌کنند؛ ۱ کیلوبایت اول را بگیر
+                val g = URL(url).openConnection() as HttpURLConnection
+                g.connectTimeout = 8000; g.readTimeout = 15000
+                g.setRequestProperty("User-Agent", UA)
+                g.setRequestProperty("Range", "bytes=0-1023")
+                try {
+                    val type = g.contentType.orEmpty()
+                    val ok = g.responseCode in 200..299 || g.responseCode == 206
+                    val first = if (ok) g.inputStream.use { it.read() } else -1
+                    if (ok && type.startsWith("image/") && first >= 0) return
+                    last = "HTTP ${g.responseCode} / $type"
+                } finally {
+                    g.disconnect()
+                }
             } catch (e: Exception) { last = e.message ?: "خطا" }
             Thread.sleep(800)
         }
